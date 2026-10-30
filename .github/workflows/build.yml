@@ -45,6 +45,37 @@ jobs:
             Write-Host "::error title=Windows build failed::$detail"
             exit $buildExit
           }
+      - name: Enable Defender coverage on the disposable hosted runner
+        shell: powershell
+        run: |
+          try {
+            if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+              throw 'Automatic Defender preparation is restricted to disposable GitHub-hosted runners.'
+            }
+            Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop
+            $preferences = Get-MpPreference -ErrorAction Stop
+            foreach ($field in @('ExclusionPath', 'ExclusionExtension', 'ExclusionProcess')) {
+              $values = @($preferences.$field | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+              if ($values.Count -gt 0) {
+                $parameters = @{ ErrorAction = 'Stop' }
+                $parameters[$field] = $values
+                Remove-MpPreference @parameters
+              }
+            }
+            $enabled = $false
+            for ($attempt = 0; $attempt -lt 10; $attempt++) {
+              if ((Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled) {
+                $enabled = $true
+                break
+              }
+              Start-Sleep -Seconds 2
+            }
+            if (-not $enabled) { throw 'The hosted runner did not enable Defender real-time protection.' }
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Defender preparation unavailable::$detail"
+            throw
+          }
       - name: Update Defender definitions on the disposable CI runner
         shell: powershell
         run: |
