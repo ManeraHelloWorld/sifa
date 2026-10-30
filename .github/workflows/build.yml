@@ -6,6 +6,83 @@ on:
 permissions:
   contents: read
 jobs:
+  android:
+    name: Real Android boot on KVM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Isolate Android device and Sifa configuration
+        run: |
+          printf 'ANDROID_AVD_HOME=%s/sifa-ci-avd\nXDG_CONFIG_HOME=%s/sifa-ci-config\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Verify actual hardware acceleration
+        run: |
+          test -c /dev/kvm
+          if ! test -r /dev/kvm || ! test -w /dev/kvm; then
+            sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          fi
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Install official SDK components using existing runner licenses
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
+            "emulator" "platform-tools" "system-images;android-35;google_apis_playstore;x86_64" < /dev/null
+          test -f "$ANDROID_HOME/system-images/android-35/google_apis_playstore/x86_64/system.img"
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Create an isolated fresh Google Play AVD
+        run: |
+          mkdir -p "$ANDROID_AVD_HOME" "$XDG_CONFIG_HOME"
+          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --name Sifa_CI --package "system-images;android-35;google_apis_playstore;x86_64" --device pixel_2
+      - name: Build the actual Sifa runtime
+        run: |
+          cmake -S . -B build-android -DCMAKE_BUILD_TYPE=Release -DSIFA_BUILD_TESTS=OFF -DBUILD_TESTING=OFF
+          cmake --build build-android --target sifa --parallel 2
+      - name: Boot real Android and verify its Google Play package
+        run: |
+          set -o pipefail
+          ./build-android/sifa --android smoke Sifa_CI --sdk "$ANDROID_HOME" \
+            --headless --gpu software --memory 2048 --cores 2 --width 1280 --height 720 \
+            --boot-timeout 300 | tee build-android/android-smoke.json
+          python3 - <<'PY'
+          import json
+          with open('build-android/android-smoke.json') as f:
+              result = json.load(f)
+          assert result['ok'] and result['boot_completed'] and result['stopped'], result
+          assert result['play_store_installed'], result
+          PY
+      - name: Verify a second real boot with the same authorization identity
+        run: |
+          set -o pipefail
+          ./build-android/sifa --android smoke Sifa_CI --sdk "$ANDROID_HOME" \
+            --headless --gpu software --memory 2048 --cores 2 --width 1280 --height 720 \
+            --boot-timeout 300 | tee build-android/android-restart.json
+          python3 - <<'PY'
+          import json
+          with open('build-android/android-restart.json') as f:
+              result = json.load(f)
+          assert result['ok'] and result['boot_completed'] and result['play_store_installed'] and result['stopped'], result
+          PY
+      - name: Preserve actual Android results without keys or guest images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sifa-real-Android-evidence
+          path: |
+            build-android/android-smoke.json
+            build-android/android-restart.json
+          if-no-files-found: ignore
+      - name: Report actual Android outcomes
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          for path in Path('build-android').glob('android-*.json'):
+              result = json.loads(path.read_text())
+              summary = json.dumps(result, ensure_ascii=True).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print('::notice title=Real Android ' + path.stem + '::' + summary)
+          PY
+
   linux:
     name: Linux source tests
     runs-on: ubuntu-24.04
@@ -25,6 +102,7 @@ jobs:
 
   windows:
     name: Windows build, Defender scan, and tests
+    needs: [linux, android]
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
