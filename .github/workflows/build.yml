@@ -45,7 +45,8 @@ jobs:
             Write-Host "::error title=Windows build failed::$detail"
             exit $buildExit
           }
-      - name: Enable Defender coverage on the disposable hosted runner
+      - &prepare_hosted_defender
+        name: Enable Defender coverage on the disposable hosted runner
         shell: powershell
         run: |
           try {
@@ -76,7 +77,8 @@ jobs:
             Write-Host "::error title=Defender preparation unavailable::$detail"
             throw
           }
-      - name: Update Defender definitions on the disposable CI runner
+      - &update_defender
+        name: Update Defender definitions on the disposable CI runner
         shell: powershell
         run: |
           try {
@@ -161,3 +163,40 @@ jobs:
             build-msvc/Sifa-Android-integration-preview.zip.sha256
             build-msvc/defender-scan.json
           if-no-files-found: error
+
+  desktop:
+    # This independent application check never publishes an executable and does
+    # not replace the required full Windows suite or its distribution gate.
+    name: Windows application UI evidence only
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build only the application for isolated UI verification
+        run: |
+          cmake -S . -B build-desktop -G "Visual Studio 17 2022" -A x64 -DSIFA_BUILD_TESTS=OFF -DBUILD_TESTING=OFF
+          cmake --build build-desktop --config Release --target sifa --parallel 2
+      - *prepare_hosted_defender
+      - *update_defender
+      - name: Scan the application before running its UI
+        shell: powershell
+        run: .\tools\scan-windows.ps1 -Path .\build-desktop\Release -ReportPath .\build-desktop\defender-scan.json
+      - name: Verify the native application without launching Android
+        shell: powershell
+        run: |
+          try {
+            .\tests\desktop_smoke.ps1 -Exe .\build-desktop\Release\Sifa.exe -OutputDirectory .\build-desktop\desktop-smoke
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Isolated desktop verification failed::$detail"
+            throw
+          }
+      - name: Save application test evidence without executables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sifa-isolated-desktop-evidence
+          path: |
+            build-desktop/desktop-smoke/
+            build-desktop/defender-scan.json
+          if-no-files-found: ignore

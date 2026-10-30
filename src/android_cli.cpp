@@ -43,6 +43,8 @@ int run_android_cli(int argc, char** argv) {
             reinterpret_cast<const char8_t*>(value.c_str()));
         else if (flag == "--memory") options.memory_mb = number(value, 1024, 16384);
         else if (flag == "--cores") options.cores = number(value, 1, 16);
+        else if (flag == "--width") options.width = number(value, 320, 4096);
+        else if (flag == "--height") options.height = number(value, 320, 4096);
         else if (flag == "--gpu") options.gpu = value;
         else if (flag == "--boot-timeout") timeout = number(value, 10, 1200);
         else throw std::runtime_error("Unknown Android option: " + flag);

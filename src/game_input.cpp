@@ -94,7 +94,7 @@ std::string console_frame(const Frame& frame, unsigned rotation, unsigned axis_m
     out << "event send";
     unsigned slots = 0;
     for (const auto& touch : frame) {
-        if (touch.slot < 0 || touch.slot >= 10 || touch.tracking_id < 0
+        if (touch.slot < 0 || touch.slot >= 10 || touch.tracking_id < 0 || touch.tracking_id > 65535
             || !std::isfinite(touch.x) || !std::isfinite(touch.y)
             || touch.x < 0 || touch.x > 1 || touch.y < 0 || touch.y > 1)
             throw std::invalid_argument("Invalid touchscreen update");

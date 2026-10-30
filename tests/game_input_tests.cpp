@@ -224,6 +224,7 @@ void serializer_tests() {
     rejects([] { console_frame({{-1, 1, 0.5, 0.5, true}}); }, "Negative slot rejected");
     rejects([] { console_frame({{10, 1, 0.5, 0.5, true}}); }, "Unsupported slot rejected");
     rejects([] { console_frame({{0, -1, 0.5, 0.5, true}}); }, "Negative tracking ID rejected");
+    rejects([] { console_frame({{0, 65536, 0.5, 0.5, true}}); }, "Tracking ID outside Android device range rejected");
     rejects([] { console_frame({{0, 1, -0.01, 0.5, true}}); }, "Negative coordinate rejected");
     rejects([] { console_frame({{0, 1, 0.5, 1.01, true}}); }, "Outside coordinate rejected");
     rejects([] { console_frame({{0, 1, std::numeric_limits<double>::quiet_NaN(), 0.5, true}}); },

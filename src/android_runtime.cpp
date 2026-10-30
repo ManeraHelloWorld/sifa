@@ -733,6 +733,9 @@ struct Runtime::Impl {
                 return result;
             }
         }
+        // The identity query itself can take seconds while Android starts.
+        // Recheck process ownership before issuing the requested command.
+        if (!ownership(result.error)) return result;
         auto command = prefix;
         command.insert(command.end(), args.begin(), args.end());
         return run_command(sdk.adb, command, env);
@@ -962,7 +965,7 @@ bool Runtime::owns_process(std::uint32_t process_id) const {
 bool Runtime::open_play_store(std::string& error) {
     std::lock_guard lock(impl_->mutex);
     if (!impl_->state.boot_completed || !impl_->state.play_store_installed) { error = "Google Play is not available in the running Android device."; return false; }
-    return impl_->action({"shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", "market://apps", "-p", "com.android.vending"}, error);
+    return impl_->action({"shell", "am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-p", "com.android.vending"}, error);
 }
 
 bool Runtime::open_game_store_page(std::string& error) {
