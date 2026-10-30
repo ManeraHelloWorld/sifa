@@ -237,22 +237,31 @@ jobs:
       - name: Run tests only after a successful scan
         shell: powershell
         run: |
+          $configured = Select-String -LiteralPath .\build-msvc\CMakeCache.txt -Pattern '^CMAKE_CTEST_COMMAND:INTERNAL=(.+)$' | Select-Object -First 1
+          if ($null -eq $configured) { throw 'CMake did not record its matching CTest executable.' }
+          $ctest = $configured.Matches[0].Groups[1].Value
+          if (-not (Test-Path -LiteralPath $ctest -PathType Leaf)) { throw 'The configured CTest executable is unavailable.' }
           $ErrorActionPreference = 'Continue'
-          $output = @(& ctest --test-dir build-msvc -C Release --output-on-failure 2>&1)
+          $output = @(& $ctest --test-dir build-msvc -C Release --output-on-failure --output-junit windows-tests.xml 2>&1)
           $testExit = $LASTEXITCODE
           $ErrorActionPreference = 'Stop'
           $output | ForEach-Object { Write-Host $_ }
+          if ($null -eq $testExit) { throw 'CTest did not execute or return an exit status.' }
           if ($testExit -ne 0) {
             $detail = (($output | Select-Object -Last 35) -join ' | ').Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Host "::error title=Windows CTest failed::$detail"
             exit $testExit
           }
+          [xml]$testReport = Get-Content -LiteralPath .\build-msvc\windows-tests.xml -Raw
+          if ($testReport.SelectNodes('//testcase').Count -eq 0) { throw 'CTest ran zero tests; distribution remains blocked.' }
       - name: Preserve Windows test reports without executables
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Sifa-Windows-test-reports
-          path: build-msvc/Testing/Temporary/*.log
+          path: |
+            build-msvc/Testing/Temporary/*.log
+            build-msvc/windows-tests.xml
           if-no-files-found: ignore
       - name: Verify the real Windows desktop and redirected CLI
         shell: powershell

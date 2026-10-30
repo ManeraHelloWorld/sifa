@@ -102,7 +102,9 @@ int fixture_emulator(const std::vector<std::string>& args) {
 int fixture_adb(const std::vector<std::string>& args) {
     if (args.size() == 1 && args[0] == "version") { std::cout << "Android Debug Bridge version test-fixture\n"; return 0; }
     if (args.size() == 2 && args[0] == "keygen") {
-        std::ofstream count(env("SIFA_FIXTURE_KEYGEN_COUNT"), std::ios::app);
+        // This is a machine-readable record with an exact LF contract on every
+        // platform; Windows text mode would otherwise translate it to CRLF.
+        std::ofstream count(env("SIFA_FIXTURE_KEYGEN_COUNT"), std::ios::app | std::ios::binary);
         count << "keygen\n";
         std::ofstream key(fs::path(args[1]), std::ios::binary);
         key << "INERT TEST FIXTURE: NOT A CRYPTOGRAPHIC KEY\n";
