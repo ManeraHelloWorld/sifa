@@ -235,7 +235,25 @@ jobs:
           path: build-msvc/defender-blocked.json
           if-no-files-found: ignore
       - name: Run tests only after a successful scan
-        run: ctest --test-dir build-msvc -C Release --output-on-failure
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $output = @(& ctest --test-dir build-msvc -C Release --output-on-failure 2>&1)
+          $testExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          $output | ForEach-Object { Write-Host $_ }
+          if ($testExit -ne 0) {
+            $detail = (($output | Select-Object -Last 35) -join ' | ').Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Windows CTest failed::$detail"
+            exit $testExit
+          }
+      - name: Preserve Windows test reports without executables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sifa-Windows-test-reports
+          path: build-msvc/Testing/Temporary/*.log
+          if-no-files-found: ignore
       - name: Verify the real Windows desktop and redirected CLI
         shell: powershell
         run: |
