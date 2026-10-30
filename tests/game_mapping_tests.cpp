@@ -41,7 +41,8 @@ struct Receiver {
             std::array<bool, 6> seen{};
             for (const auto& update : frame) {
                 require(update.slot >= 0 && update.slot < 6, "Bounded contact slot");
-                require(update.tracking_id > 0, "Positive tracking ID");
+                require(update.tracking_id > 0 && update.tracking_id <= 65535,
+                        "Tracking ID fits the Android touchscreen range");
                 require(std::isfinite(update.x) && std::isfinite(update.y) &&
                         update.x >= 0 && update.x <= 1 && update.y >= 0 && update.y <= 1,
                         "Normalized, finite contact location");
@@ -194,7 +195,31 @@ int main() {
         sequence_receiver.accept(sequence.release_all());
         require(sequence_receiver.count() == 0, "Long mixed input sequence leaves no stuck contacts");
 
-        std::cout << "game_mapping: simultaneous contacts, diagonal radius, aim continuity, focus release, bounds and lifetimes passed\n";
+        // Keep the first contact alive while the tracking-ID counter wraps.
+        // Reusing that ID would merge two fingers in a real Protocol B receiver.
+        Mapper wrapping;
+        Receiver wrap_receiver;
+        wrap_receiver.accept(wrapping.mouse_move(1, 0));
+        const int held_id = wrap_receiver.live[1].tracking_id;
+        int previous_fire_id = 0;
+        bool observed_wrap = false;
+        for (unsigned cycle = 0; cycle < 70000; ++cycle) {
+            wrap_receiver.accept(wrapping.set_button(Button::fire, true));
+            const int fire_id = wrap_receiver.live[2].tracking_id;
+            require(fire_id != held_id, "Tracking-ID wrap skips the still-held aim contact");
+            require(wrap_receiver.live[1].tracking_id == held_id && wrap_receiver.live[1].down,
+                    "Held aim contact survives tracking-ID wrap unchanged");
+            if (previous_fire_id > fire_id) observed_wrap = true;
+            previous_fire_id = fire_id;
+            wrap_receiver.accept(wrapping.set_button(Button::fire, false));
+        }
+        require(observed_wrap, "Test exercised a complete tracking-ID counter wrap");
+        require(wrap_receiver.count() == 1 && wrapping.active_touch_count() == 1,
+                "Wrapped press cycles retain only the intentionally held contact");
+        wrap_receiver.accept(wrapping.release_all());
+        require(wrap_receiver.count() == 0, "Wrapped contacts can be fully released");
+
+        std::cout << "game_mapping: simultaneous contacts, diagonal radius, aim continuity, focus release, bounds and tracking-ID wrap passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "game_mapping failure: " << error.what() << '\n';

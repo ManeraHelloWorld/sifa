@@ -810,7 +810,7 @@ bool Runtime::start(const LaunchOptions& options, std::string& error) {
         {"ANDROID_USER_HOME", path_text(directory / ".android")},
         {"ANDROID_EMULATOR_HOME", path_text(directory / ".android")},
         {"ANDROID_SDK_HOME", path_text(directory)},
-        {"ADB_VENDOR_KEYS", path_text(directory / ".android")}
+        {"ADB_VENDOR_KEYS", path_text(directory / ".android" / "adbkey")}
     };
     const auto version = run_command(impl_->sdk.emulator, {"-version"}, impl_->env);
     if (!version.ok || version.output.find("Android emulator version") == std::string::npos) {
@@ -827,9 +827,21 @@ bool Runtime::start(const LaunchOptions& options, std::string& error) {
             return false;
         }
     }
+    // Recent platform-tools ignore ANDROID_USER_HOME when choosing their own
+    // default key, while Emulator honors ANDROID_EMULATOR_HOME. Create an
+    // instance key first, then explicitly load that key in the private server.
+    // Otherwise starting the server before Emulator creates its key can leave
+    // the real Android transport offline. No existing user key is read/copied.
+    const auto key_path = directory / ".android" / "adbkey";
+    const auto keygen = run_command(impl_->sdk.adb, {"keygen", path_text(key_path)}, impl_->env);
+    std::error_code key_error;
+    if (!keygen.ok || !fs::is_regular_file(key_path, key_error) || key_error) {
+        error = "Could not generate the private Android instance's ADB key. " + keygen.error;
+        return false;
+    }
     ReservedPort console, adb_device, server;
     bool allocated = false;
-    for (unsigned port = 5554; port <= 5680; port += 2) {
+    for (unsigned port = 5554; port <= 5584; port += 2) {
         if (console.reserve(port) && adb_device.reserve(port + 1)) { allocated = true; break; }
     }
     if (!allocated || !server.reserve(0)) { error = "No free local ports are available for a private Android instance."; return false; }

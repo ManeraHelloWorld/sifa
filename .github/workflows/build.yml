@@ -90,6 +90,43 @@ jobs:
         shell: powershell
         run: |
           .\tools\scan-windows.ps1 -Path .\build-msvc\Release -ReportPath .\build-msvc\defender-scan.json
+      - name: Record Defender diagnostics if validation is blocked
+        if: failure()
+        shell: powershell
+        run: |
+          $root = [IO.Path]::GetFullPath('.\build-msvc\Release') + '\'
+          $names = @{}
+          foreach ($threat in @(Get-MpThreat -ErrorAction Stop)) {
+            $names[[string]$threat.ThreatID] = [string]$threat.ThreatName
+          }
+          $records = @()
+          foreach ($detection in @(Get-MpThreatDetection -ErrorAction Stop)) {
+            $resources = @($detection.Resources | Where-Object {
+              ([string]$_).IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0
+            })
+            if ($resources.Count -eq 0) { continue }
+            $record = [ordered]@{
+              threat_id = [string]$detection.ThreatID
+              threat_name = $names[[string]$detection.ThreatID]
+              detection_id = [string]$detection.DetectionID
+              detected_at = [string]$detection.InitialDetectionTime
+              action_success = $detection.ActionSuccess
+              resources = $resources
+            }
+            $records += $record
+            $detail = (($record | ConvertTo-Json -Depth 4 -Compress)).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Defender detection details::$detail"
+          }
+          $report = [ordered]@{ result = 'blocked'; detections = $records }
+          $null = [IO.Directory]::CreateDirectory('.\build-msvc')
+          [IO.File]::WriteAllText([IO.Path]::GetFullPath('.\build-msvc\defender-blocked.json'), ($report | ConvertTo-Json -Depth 6))
+      - name: Preserve blocked-scan metadata without executables
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sifa-Defender-diagnostics
+          path: build-msvc/defender-blocked.json
+          if-no-files-found: ignore
       - name: Run tests only after a successful scan
         run: ctest --test-dir build-msvc -C Release --output-on-failure
       - name: Verify the real Windows desktop and redirected CLI

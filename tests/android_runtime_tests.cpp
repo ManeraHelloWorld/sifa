@@ -110,7 +110,13 @@ int fixture_emulator(const std::vector<std::string>& args) {
 
 int fixture_adb(const std::vector<std::string>& args) {
     if (args.size() == 1 && args[0] == "version") { std::cout << "Android Debug Bridge version test-fixture\n"; return 0; }
+    if (args.size() == 2 && args[0] == "keygen") {
+        std::ofstream key(fs::path(args[1]), std::ios::binary);
+        key << "INERT TEST FIXTURE: NOT A CRYPTOGRAPHIC KEY\n";
+        return key ? 0 : 15;
+    }
     if (contains(args, "nodaemon")) {
+        if (env("ADB_VENDOR_KEYS").empty() || !fs::is_regular_file(fs::path(env("ADB_VENDOR_KEYS")))) return 16;
         const auto endpoint = argument(args, "-L");
         if (endpoint.empty()) return 10;
         const auto colon = endpoint.rfind(':');

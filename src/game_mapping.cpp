@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -55,9 +54,12 @@ Mapper::Mapper(MappingConfig config) : config_(config) {
 }
 
 int Mapper::next_tracking_id() {
+    // The actual Android virtual touchscreen advertises ABS_MT_TRACKING_ID
+    // max 65535. Reserve zero and never reuse a still-active contact's ID.
+    constexpr std::uint32_t maximum_tracking_id = 65535;
     for (;;) {
         const auto candidate = static_cast<int>(next_tracking_id_);
-        if (++next_tracking_id_ >= static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+        if (++next_tracking_id_ > maximum_tracking_id)
             next_tracking_id_ = 1;
         const auto duplicate = std::any_of(contacts_.begin(), contacts_.end(), [candidate](const Contact& c) {
             return c.down && c.tracking_id == candidate;
