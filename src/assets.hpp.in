@@ -1,0 +1,7 @@
+#pragma once
+#include <string_view>
+namespace sifa::assets {
+inline constexpr std::string_view html = R"SIFA_EMBED(@SIFA_HTML@)SIFA_EMBED";
+inline constexpr std::string_view css = R"SIFA_EMBED(@SIFA_CSS@)SIFA_EMBED";
+inline constexpr std::string_view js = R"SIFA_EMBED(@SIFA_JS@)SIFA_EMBED";
+}

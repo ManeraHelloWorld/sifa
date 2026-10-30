@@ -1,0 +1,58 @@
+name: Sifa build and tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    name: Linux source tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Check distribution safeguards
+        run: python tests/package_tests.py
+
+  windows:
+    name: Windows build, Defender scan, and tests
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build using the documented Windows helper
+        shell: cmd
+        run: tools\build-windows.cmd
+      - name: Scan all built EXEs before executing them
+        shell: powershell
+        run: |
+          .\tools\scan-windows.ps1 -Path .\build-msvc\Release -ReportPath .\build-msvc\defender-scan.json
+      - name: Run tests only after a successful scan
+        run: ctest --test-dir build-msvc -C Release --output-on-failure
+      - name: Package the exact scanned executable
+        run: >-
+          python tools/package_release.py
+          --exe build-msvc/Release/Sifa.exe
+          --scan-report build-msvc/defender-scan.json
+          --output build-msvc/Sifa-Windows-preview.zip
+      - name: Publish the scanned preview and scan metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sifa-Windows-preview
+          path: |
+            build-msvc/Sifa-Windows-preview.zip
+            build-msvc/Sifa-Windows-preview.zip.sha256
+            build-msvc/defender-scan.json
+          if-no-files-found: error
