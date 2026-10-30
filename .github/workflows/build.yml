@@ -22,6 +22,10 @@ jobs:
             sudo setfacl -m "u:$(id -un):rw" /dev/kvm
           fi
           test -r /dev/kvm && test -w /dev/kvm
+      - name: Install the official Linux emulator runtime dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libpulse0 libglu1-mesa libnss3 libxcb-cursor0 libxkbcommon-x11-0 libasound2t64
       - name: Install official SDK components using existing runner licenses
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
@@ -160,7 +164,14 @@ jobs:
         shell: powershell
         run: |
           try {
-            Update-MpSignature -ErrorAction Stop
+            try {
+              Update-MpSignature -ErrorAction Stop
+            } catch {
+              Write-Warning ('Default Defender update failed; checking the running service before using Microsoft Update Server: ' + $_.Exception.Message)
+              $health = Get-MpComputerStatus -ErrorAction Stop
+              if (-not $health.AMServiceEnabled -or -not $health.AntivirusEnabled) { throw }
+              Update-MpSignature -UpdateSource MicrosoftUpdateServer -ErrorAction Stop
+            }
           } catch {
             $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Host "::error title=Defender update unavailable::$detail"
