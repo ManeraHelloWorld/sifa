@@ -18,9 +18,12 @@ jobs:
       - name: Verify actual hardware acceleration
         run: |
           test -c /dev/kvm
-          if ! test -r /dev/kvm || ! test -w /dev/kvm; then
-            sudo setfacl -m "u:$(id -un):rw" /dev/kvm
-          fi
+          # Keep access scoped to this disposable runner user even if udev
+          # recreates the device between the two actual emulator starts.
+          printf 'KERNEL=="kvm", OWNER="%s", MODE="0600"\n' "$(id -un)" | sudo tee /etc/udev/rules.d/99-sifa-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
           test -r /dev/kvm && test -w /dev/kvm
       - name: Install the official Linux emulator runtime dependencies
         run: |
@@ -173,9 +176,22 @@ jobs:
               Update-MpSignature -UpdateSource MicrosoftUpdateServer -ErrorAction Stop
             }
           } catch {
-            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Host "::error title=Defender update unavailable::$detail"
-            throw
+            $updateFailure = $_.Exception.Message
+            # The updater may lose its RPC connection during an engine restart.
+            # Freshness and health are measured again; neither a failed update
+            # nor a successful update substitutes for the mandatory scan gate.
+            Start-Sleep -Seconds 5
+            $health = Get-MpComputerStatus -ErrorAction Stop
+            $age = ([datetime]::UtcNow - $health.AntivirusSignatureLastUpdated.ToUniversalTime()).TotalHours
+            if ($health.AMServiceEnabled -and $health.AntivirusEnabled -and $health.RealTimeProtectionEnabled -and
+                $health.AMRunningMode -eq 'Normal' -and -not $health.DefenderSignaturesOutOfDate -and
+                $age -ge 0 -and $age -le 24 -and $health.AntivirusSignatureVersion -and $health.AMEngineVersion) {
+              Write-Warning ("The update command failed ($updateFailure); installed definitions are $age hours old. The unchanged scan gate will independently recheck readiness and scan every EXE.")
+            } else {
+              $detail = $updateFailure.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::error title=Defender update unavailable::$detail"
+              throw
+            }
           }
       - name: Scan all built EXEs before executing them
         shell: powershell
