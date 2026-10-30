@@ -263,6 +263,10 @@ try {
     Write-Host 'This scan completed without reported detections and the executable hashes are unchanged. This is not a safety guarantee.'
     exit 0
 } catch {
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+        Write-Host "::error title=Defender scan blocked::$detail"
+    }
     Write-Error ("Defender scan gate blocked: " + $_.Exception.Message) -ErrorAction Continue
     exit 1
 }

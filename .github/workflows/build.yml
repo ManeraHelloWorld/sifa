@@ -33,8 +33,28 @@ jobs:
         with:
           python-version: '3.12'
       - name: Build using the documented Windows helper
-        shell: cmd
-        run: tools\build-windows.cmd
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $output = @(& cmd.exe /d /c tools\build-windows.cmd 2>&1)
+          $buildExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          $output | ForEach-Object { Write-Host $_ }
+          if ($buildExit -ne 0) {
+            $detail = (($output | Select-Object -Last 12) -join ' | ').Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Windows build failed::$detail"
+            exit $buildExit
+          }
+      - name: Update Defender definitions on the disposable CI runner
+        shell: powershell
+        run: |
+          try {
+            Update-MpSignature -ErrorAction Stop
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Defender update unavailable::$detail"
+            throw
+          }
       - name: Scan all built EXEs before executing them
         shell: powershell
         run: |
