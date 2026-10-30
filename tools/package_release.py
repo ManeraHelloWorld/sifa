@@ -43,7 +43,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", type=Path, default=root / "build-msvc" / "Release" / "Sifa.exe")
     parser.add_argument("--scan-report", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=root / "build-msvc" / "Sifa-Windows-preview.zip")
+    parser.add_argument("--output", type=Path, default=root / "build-msvc" / "Sifa-Android-integration-preview.zip")
     args = parser.parse_args()
     try:
         executable = check_scan(args.exe, args.scan_report)
@@ -54,7 +54,7 @@ def main():
         # Package the checked bytes, even if the source file changes later.
         archive.writestr("Sifa/Sifa.exe", executable)
         archive.write(args.scan_report, "Sifa/defender-scan.json")
-        for file in ["README.md", "docs/architecture.md", "docs/validation.md",
+        for file in ["README.md", "docs/architecture.md", "docs/android-runtime.md", "docs/validation.md",
                      "include/third_party/JSON_LICENSE.MIT"]:
             archive.write(root / file, "Sifa/" + file)
     digest = hashlib.sha256(args.output.read_bytes()).hexdigest()

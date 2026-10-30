@@ -5,22 +5,37 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include "sifa/desktop.hpp"
+#endif
 
-int main(int argc, char** argv) {
+int run_android_cli(int argc, char** argv);
+
+int sifa_main(int argc, char** argv) {
     try {
+#ifdef _WIN32
+        if (argc == 1) return sifa::run_desktop_app();
+#endif
+        if (argc > 1 && std::string(argv[1]) == "--android")
+            return run_android_cli(argc - 2, argv + 2);
         sifa::ServerOptions options;
         options.data_dir = sifa::default_data_dir();
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--help" || arg == "-h") {
-                std::cout << "Sifa 0.1.0 — independent VM engine prototype\n"
+                std::cout << "Sifa 0.2.0 — Android runtime integration preview\n"
+                    "Windows: run without arguments for the native desktop launcher.\n"
+                    "       sifa --android list [--sdk PATH]\n"
+                    "       sifa --android smoke AVD [--sdk PATH] [--headless] [--software-cpu]\n"
+                    "       sifa --lab (legacy VM demonstration)\n"
                     "Usage: sifa [--no-open] [--port 0..65535] [--data-dir PATH]\n"
                     "       sifa --diagnostics\n"
                     "       sifa --demo [auto|software|hardware]\n"
-                    "Android and Standoff 2 are not supported yet.\n";
+                    "Android requires a separately installed SDK and AVD. Game compatibility is unverified.\n";
                 return 0;
             }
-            if (arg == "--version") { std::cout << "Sifa 0.1.0\n"; return 0; }
+            if (arg == "--version") { std::cout << "Sifa 0.2.0\n"; return 0; }
+            if (arg == "--lab") continue;
             if (arg == "--diagnostics") { std::cout << sifa::diagnostics_json() << '\n'; return 0; }
             if (arg == "--demo") {
                 const auto r = sifa::run_guest_demo(i + 1 < argc ? argv[++i] : "auto");
@@ -48,3 +63,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+
+#ifndef _WIN32
+int main(int argc, char** argv) { return sifa_main(argc, argv); }
+#endif

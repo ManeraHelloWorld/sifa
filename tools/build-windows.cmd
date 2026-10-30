@@ -72,7 +72,7 @@ echo Scan the entire build-msvc directory before starting Sifa or its tests.
 echo If Defender reports a threat or the scan fails, stop and keep the report.
 echo Do not disable protection or add an exclusion to run this build.
 echo.
-echo This preview does not run Android or Standoff 2 yet.
+echo Android requires a separately installed SDK and AVD. Game compatibility is unverified.
 popd
 exit /b 0
 
