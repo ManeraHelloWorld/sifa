@@ -1,7 +1,10 @@
 #pragma once
 #include <string_view>
 namespace sifa::assets {
-inline constexpr std::string_view html = R"SIFA_EMBED(@SIFA_HTML@)SIFA_EMBED";
-inline constexpr std::string_view css = R"SIFA_EMBED(@SIFA_CSS@)SIFA_EMBED";
-inline constexpr std::string_view js = R"SIFA_EMBED(@SIFA_JS@)SIFA_EMBED";
+inline constexpr char html_bytes[] = {@SIFA_HTML_BYTES@};
+inline constexpr char css_bytes[] = {@SIFA_CSS_BYTES@};
+inline constexpr char js_bytes[] = {@SIFA_JS_BYTES@};
+inline constexpr std::string_view html{html_bytes, sizeof(html_bytes)};
+inline constexpr std::string_view css{css_bytes, sizeof(css_bytes)};
+inline constexpr std::string_view js{js_bytes, sizeof(js_bytes)};
 }

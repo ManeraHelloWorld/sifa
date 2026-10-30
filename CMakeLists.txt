@@ -30,9 +30,16 @@ endif()
 
 # Embed the UI at configure time: the installed executable needs no web folder,
 # Python runtime, Node runtime or network connection.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/web/index.html" SIFA_HTML)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/web/styles.css" SIFA_CSS)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/web/app.js" SIFA_JS)
+function(sifa_embed_asset path variable)
+  # MSVC limits individual string literals. A byte array preserves UTF-8 exactly
+  # without splitting multibyte characters or requiring a build-time interpreter.
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${path}" asset_hex HEX)
+  string(REGEX REPLACE "(..)" "char(0x\\1),\n" asset_bytes "${asset_hex}")
+  set(${variable} "${asset_bytes}" PARENT_SCOPE)
+endfunction()
+sifa_embed_asset(web/index.html SIFA_HTML_BYTES)
+sifa_embed_asset(web/styles.css SIFA_CSS_BYTES)
+sifa_embed_asset(web/app.js SIFA_JS_BYTES)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   web/index.html web/styles.css web/app.js)
 configure_file(src/assets.hpp.in generated/assets.hpp @ONLY)

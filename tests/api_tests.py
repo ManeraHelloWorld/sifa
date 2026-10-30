@@ -89,6 +89,8 @@ class ApiTests(unittest.TestCase):
 
     def test_state_and_embedded_assets(self):
         self.assertIn("Sifa", self.html)
+        assets = Path(__file__).resolve().parents[1] / "web"
+        self.assertEqual(self.html, (assets / "index.html").read_bytes().decode("utf-8"))
         state = self.request("/api/state")
         self.assertFalse(state["capabilities"]["android"])
         self.assertFalse(state["capabilities"]["game"])
@@ -96,7 +98,7 @@ class ApiTests(unittest.TestCase):
         for asset, content_type in [("/app.js", "text/javascript"), ("/styles.css", "text/css")]:
             with self.client.open(self.origin + asset, timeout=5) as response:
                 self.assertIn(content_type, response.headers["Content-Type"])
-                self.assertGreater(len(response.read()), 100)
+                self.assertEqual(response.read(), (assets / asset.lstrip("/")).read_bytes())
 
     def test_guest_executes_real_instructions(self):
         for backend in ["software", "auto"]:
