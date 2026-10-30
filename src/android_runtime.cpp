@@ -32,6 +32,7 @@
 #include <poll.h>
 #include <spawn.h>
 #include <sys/socket.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -582,12 +583,107 @@ fs::path instance_directory(const fs::path& parent, std::string& error) {
         fs::permissions(candidate, fs::perms::owner_all, fs::perm_options::replace, ec);
         if (ec) { error = "Cannot protect Android runtime directory permissions."; return {}; }
 #endif
-        fs::create_directory(candidate / ".android", ec);
-        if (ec) { error = "Cannot create Android tool settings directory."; return {}; }
         return fs::absolute(candidate, ec);
     }
     error = "Cannot allocate a unique Android runtime directory.";
     return {};
+}
+
+fs::path stable_profile(const fs::path& parent, std::string& error) {
+    std::error_code ec;
+    const auto profile = fs::absolute(parent / ".android-profile", ec);
+    if (ec) { error = "Cannot resolve the Sifa Android profile path."; return {}; }
+    const auto existing = fs::symlink_status(profile, ec);
+    if (existing.type() != fs::file_type::not_found &&
+        (ec || existing.type() != fs::file_type::directory)) {
+        error = "The Sifa Android profile must be a normal directory, not a link or file.";
+        return {};
+    }
+    ec.clear();
+    fs::create_directories(profile, ec);
+    if (ec) { error = "Cannot create the persistent Sifa Android profile: " + ec.message(); return {}; }
+#ifndef _WIN32
+    fs::permissions(profile, fs::perms::owner_all, fs::perm_options::replace, ec);
+    if (ec) { error = "Cannot protect the Sifa Android profile permissions."; return {}; }
+#endif
+    return profile;
+}
+
+// A stable key avoids a new Android authorization prompt on every launch.
+// Serializing the first creation also prevents concurrent Sifa instances from
+// replacing one another's key. This lock has no effect on SDK/global keys.
+class ProfileLock {
+public:
+    ~ProfileLock() {
+#ifdef _WIN32
+        if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+#else
+        if (file_ >= 0) { flock(file_, LOCK_UN); close(file_); }
+#endif
+    }
+    bool acquire(const fs::path& profile, std::string& error) {
+        const auto deadline = Clock::now() + std::chrono::seconds(5);
+        const auto path = profile / "key.lock";
+#ifdef _WIN32
+        do {
+            file_ = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            if (file_ != INVALID_HANDLE_VALUE) {
+                BY_HANDLE_FILE_INFORMATION info{};
+                if (!GetFileInformationByHandle(file_, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+                    error = "The Sifa key lock must be a regular local file."; return false;
+                }
+                return true;
+            }
+            if (GetLastError() != ERROR_SHARING_VIOLATION) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        } while (Clock::now() < deadline);
+#else
+        file_ = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+        struct stat info{};
+        if (file_ < 0 || fstat(file_, &info) || !S_ISREG(info.st_mode)) {
+            error = "Could not open the private Sifa key-generation lock."; return false;
+        }
+        do {
+            if (flock(file_, LOCK_EX | LOCK_NB) == 0) return true;
+            if (errno != EWOULDBLOCK && errno != EAGAIN) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        } while (Clock::now() < deadline);
+#endif
+        error = "The Sifa Android profile is busy or cannot be locked.";
+        return false;
+    }
+private:
+#ifdef _WIN32
+    HANDLE file_ = INVALID_HANDLE_VALUE;
+#else
+    int file_ = -1;
+#endif
+};
+
+bool ensure_private_key(const Sdk& sdk, const fs::path& profile, const Environment& env, std::string& error) {
+    ProfileLock lock;
+    if (!lock.acquire(profile, error)) return false;
+    const auto path = profile / "adbkey";
+    std::error_code ec;
+    const auto existing = fs::symlink_status(path, ec);
+    if (existing.type() == fs::file_type::not_found) {
+        const auto generated = run_command(sdk.adb, {"keygen", path_text(path)}, env);
+        if (!generated.ok) { error = "Could not generate Sifa's persistent ADB key. " + generated.error; return false; }
+    } else if (ec || existing.type() != fs::file_type::regular) {
+        error = "The Sifa Android key must be a regular file; existing files will not be replaced.";
+        return false;
+    }
+    ec.clear();
+    if (!fs::is_regular_file(fs::symlink_status(path, ec)) || ec || fs::file_size(path, ec) == 0 || ec) {
+        error = "The Sifa Android key is missing or empty; existing keys will not be overwritten.";
+        return false;
+    }
+#ifndef _WIN32
+    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, ec);
+    if (ec) { error = "Cannot protect Sifa's Android key permissions."; return false; }
+#endif
+    return true;
 }
 
 } // namespace
@@ -738,7 +834,10 @@ struct Runtime::Impl {
         if (!ownership(result.error)) return result;
         auto command = prefix;
         command.insert(command.end(), args.begin(), args.end());
-        return run_command(sdk.adb, command, env);
+        result = run_command(sdk.adb, command, env);
+        if (!result.ok && result.output.find("unauthorized") != std::string::npos)
+            result.error = "Android requires authorization for Sifa's debugging connection. Open the Android window and approve its USB debugging dialog. Choose Always allow from this computer to remember this Sifa profile.";
+        return result;
     }
 
     bool action(const std::vector<std::string>& args, std::string& error) {
@@ -806,14 +905,15 @@ bool Runtime::start(const LaunchOptions& options, std::string& error) {
     impl_->adb_server.reset();
     const auto directory = instance_directory(impl_->logs, error);
     if (directory.empty()) return false;
+    const auto profile = stable_profile(impl_->logs, error);
+    if (profile.empty()) return false;
     impl_->env = {
         {"ANDROID_HOME", path_text(impl_->sdk.root)},
         {"ANDROID_SDK_ROOT", path_text(impl_->sdk.root)},
         {"ANDROID_AVD_HOME", path_text(fs::absolute(avd_home()))},
-        {"ANDROID_USER_HOME", path_text(directory / ".android")},
-        {"ANDROID_EMULATOR_HOME", path_text(directory / ".android")},
-        {"ANDROID_SDK_HOME", path_text(directory)},
-        {"ADB_VENDOR_KEYS", path_text(directory / ".android" / "adbkey")}
+        {"ANDROID_USER_HOME", path_text(profile)},
+        {"ANDROID_EMULATOR_HOME", path_text(profile)},
+        {"ADB_VENDOR_KEYS", path_text(profile / "adbkey")}
     };
     const auto version = run_command(impl_->sdk.emulator, {"-version"}, impl_->env);
     if (!version.ok || version.output.find("Android emulator version") == std::string::npos) {
@@ -832,16 +932,10 @@ bool Runtime::start(const LaunchOptions& options, std::string& error) {
     }
     // Recent platform-tools ignore ANDROID_USER_HOME when choosing their own
     // default key, while Emulator honors ANDROID_EMULATOR_HOME. Create an
-    // instance key first, then explicitly load that key in the private server.
+    // persistent Sifa key first, then explicitly load it in the private server.
     // Otherwise starting the server before Emulator creates its key can leave
     // the real Android transport offline. No existing user key is read/copied.
-    const auto key_path = directory / ".android" / "adbkey";
-    const auto keygen = run_command(impl_->sdk.adb, {"keygen", path_text(key_path)}, impl_->env);
-    std::error_code key_error;
-    if (!keygen.ok || !fs::is_regular_file(key_path, key_error) || key_error) {
-        error = "Could not generate the private Android instance's ADB key. " + keygen.error;
-        return false;
-    }
+    if (!ensure_private_key(impl_->sdk, profile, impl_->env, error)) return false;
     ReservedPort console, adb_device, server;
     bool allocated = false;
     for (unsigned port = 5554; port <= 5584; port += 2) {

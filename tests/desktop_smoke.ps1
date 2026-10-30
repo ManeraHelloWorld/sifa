@@ -181,11 +181,14 @@ try {
         $guiProcess.Refresh()
         if ($guiProcess.HasExited) { throw ('Desktop exited before creating its window: ' + $guiStderr.Result) }
         $window = [SifaDesktopSmoke.Native]::FindWindow([uint32]$guiProcess.Id, 'SifaAndroidDesktop')
-        if ($window -ne [IntPtr]::Zero) { break }
+        # EnumWindows can observe the HWND while CreateWindowEx/WM_CREATE are
+        # still running, before the application reaches ShowWindow. Visibility
+        # is part of readiness, not an immediate post-creation invariant.
+        if ($window -ne [IntPtr]::Zero -and [SifaDesktopSmoke.Native]::IsWindowVisible($window)) { break }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
     Assert-True ($window -ne [IntPtr]::Zero) 'Native Sifa window was not created within 20 seconds.'
-    Assert-True ([SifaDesktopSmoke.Native]::IsWindowVisible($window)) 'Native Sifa window is hidden.'
+    Assert-True ([SifaDesktopSmoke.Native]::IsWindowVisible($window)) 'Native Sifa window did not become visible within 20 seconds.'
     [SifaDesktopSmoke.Native]::Message($window, 0) | Out-Null
     $checks.Add('Visible native Windows window responds to messages')
 
@@ -200,7 +203,8 @@ try {
         @{ id = 111; class = 'Button'; name = 'Game store page' },
         @{ id = 112; class = 'Button'; name = 'Start game' },
         @{ id = 113; class = 'Button'; name = 'SDK setup help' },
-        @{ id = 114; class = 'Edit'; name = 'Status log' }
+        @{ id = 114; class = 'Edit'; name = 'Status log' },
+        @{ id = 116; class = 'ComboBox'; name = 'Android resolution' }
     )) {
         $handle = [SifaDesktopSmoke.Native]::GetDlgItem($window, $definition.id)
         Assert-True ($handle -ne [IntPtr]::Zero) ('Missing native control: ' + $definition.name)
@@ -221,6 +225,9 @@ try {
     }
     Assert-True ([SifaDesktopSmoke.Native]::IsWindowEnabled($controls[113])) 'Setup help must remain usable when the SDK is missing.'
     $checks.Add('Missing SDK is reported; Android, Play and game actions remain unavailable')
+    Assert-True ([SifaDesktopSmoke.Native]::IsWindowEnabled($controls[116])) 'Android resolution cannot be configured before startup.'
+    Assert-True ([SifaDesktopSmoke.Native]::Message($controls[116], 0x0147) -eq 0) 'Fresh desktop preferences did not select the 1280x720 resolution option.'
+    $checks.Add('Fresh desktop preferences select the minimum 1280x720 resolution')
 
     $previousLength = $logText.Length
     [SifaDesktopSmoke.Native]::Message($controls[103], 0x00F5) | Out-Null
@@ -249,6 +256,7 @@ try {
     Assert-True (Test-Path -LiteralPath $preferencesPath -PathType Leaf) 'Desktop preferences were not saved in isolated LOCALAPPDATA.'
     $preferences = Get-Content -LiteralPath $preferencesPath -Raw | ConvertFrom-Json
     Assert-True ($null -ne $preferences.cores -and $null -ne $preferences.memory_mb) 'Saved desktop preferences are invalid.'
+    Assert-True ($preferences.width -eq 1280 -and $preferences.height -eq 720) 'The default desktop resolution was not saved as 1280x720.'
     $checks.Add('WM_CLOSE exits successfully and saves preferences only in the isolated user directory')
     $result.result = 'passed'
 } catch {

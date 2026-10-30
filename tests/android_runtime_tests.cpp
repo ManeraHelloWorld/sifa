@@ -111,6 +111,8 @@ int fixture_emulator(const std::vector<std::string>& args) {
 int fixture_adb(const std::vector<std::string>& args) {
     if (args.size() == 1 && args[0] == "version") { std::cout << "Android Debug Bridge version test-fixture\n"; return 0; }
     if (args.size() == 2 && args[0] == "keygen") {
+        std::ofstream count(env("SIFA_FIXTURE_KEYGEN_COUNT"), std::ios::app);
+        count << "keygen\n";
         std::ofstream key(fs::path(args[1]), std::ios::binary);
         key << "INERT TEST FIXTURE: NOT A CRYPTOGRAPHIC KEY\n";
         return key ? 0 : 15;
@@ -211,6 +213,7 @@ int main(int argc, char** argv) {
     Environment sdk_environment("ANDROID_HOME", sdk_root.string());
     Environment capture_environment("SIFA_FIXTURE_ARGUMENTS", (directory / "arguments.txt").string());
     Environment command_environment("SIFA_FIXTURE_COMMANDS", (directory / "commands.txt").string());
+    Environment keygen_environment("SIFA_FIXTURE_KEYGEN_COUNT", (directory / "keygen-count.txt").string());
 
     const auto sdk = sifa::android::discover_sdk(sdk_root);
     check(sdk.valid && sdk.root == fs::weakly_canonical(sdk_root), "SDK discovery preserves executable paths containing spaces and shell punctuation");
@@ -286,6 +289,16 @@ int main(int argc, char** argv) {
             check(!runtime.snapshot().running, "stopped process is not reported as running");
             check(!runtime.owned_console_endpoint(endpoint, error), "stopped instance cannot expose input endpoint");
             check(fs::exists(status.log_path), "owned process output has a real log file");
+            const auto key_path = directory / "private logs" / ".android-profile" / "adbkey";
+            const auto original_key_time = fs::last_write_time(key_path);
+            check(runtime.start(options, error), "same Sifa profile can restart its emulator");
+            check(fs::last_write_time(key_path) == original_key_time && read_file(directory / "keygen-count.txt") == "keygen\n",
+                  "restart preserves the existing profile key without invoking keygen again");
+            check(runtime.stop(error), "restarted instance stops safely");
+            fs::remove(key_path); // This test file contains an explicit inert fixture marker, not a real key.
+            check(runtime.start(options, error), "a genuinely absent fixture key is generated on a later start");
+            check(read_file(directory / "keygen-count.txt") == "keygen\nkeygen\n", "keygen runs only when the profile key is absent");
+            check(runtime.stop(error), "third owned fixture process stops safely");
         }
         if (unrelated != invalid_socket) close_socket(unrelated);
     }
